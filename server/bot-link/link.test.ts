@@ -362,6 +362,28 @@ describe("the link between a computer and its Cloud", () => {
     expect(cloud.runs).toEqual([]);
   });
 
+  it("a bot here carrying a link- shaped id keeps the work addressed to its start, and never sends it to that address", async () => {
+    const { computer, cloud } = await two();
+    // A legacy bot here whose id is a whole address plus a suffix: its first characters are a spelling of it, and they
+    // are also an address the Cloud's own bot answers to.
+    const legacy = `${onCloud("shared")}-extra`;
+    computer.bots.push({ id: legacy, name: "Importer" });
+    computer.link.botsChanged();
+    expect(computer.link.resolve(onCloud("shared"))).toBeUndefined();
+    expect(computer.link.resolve(onCloud("shared").toUpperCase())).toBeUndefined();
+    // Every address no bot here starts with still resolves: the ordering changes nothing for an unrelated one.
+    expect(computer.link.resolve(onCloud("cloud-analyst"))?.bot.id).toBe("cloud-analyst");
+    let asked: CoordinateBotsCall | undefined;
+    const { receipts } = await computer.handOff("shared", call([onCloud("shared")], "Draft the summary"), async (input) => {
+      asked = input;
+      return { status: 200, body: { receipts: [{ botId: legacy, outcome: "queued", detail: "here" }], message: "Sent to Importer." } };
+    });
+    expect(asked?.botIds).toEqual([onCloud("shared")]);
+    expect(receipts).toEqual([{ botId: legacy, outcome: "queued", detail: "here" }]);
+    // Nothing crossed: the brief and its files stayed with the bot here.
+    expect(cloud.runs).toEqual([]);
+  });
+
   it("work goes from the computer to the Cloud and its result resumes the requester once, as the person's own work", async () => {
     const { computer, cloud } = await two();
     const { receipts, answer } = await computer.handOff("local-writer", call(["Analyst"], "Count the orders", { doneWhen: "a number" }));

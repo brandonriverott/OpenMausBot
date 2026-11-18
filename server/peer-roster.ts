@@ -228,10 +228,12 @@ export function resolveTeammate<T extends RosterMember>(
   const reachable = reachablePeers(bots, from, wider?.reaches);
   /** The answer a spelling that names no bot the caller may be shown gets, identical to a truly unknown id's: it can
    * only list the teammates it could have been shown (`exposed`) — never an archived bot, one its reach hides, or one
-   * in another audience — so no count, candidate, role, id or owner of an invisible bot is in it. Asked only when a
-   * spelling names nothing, so a resolution that succeeds never reads the person's other places. */
+   * in another audience — so no count, candidate, role, id or owner of an invisible bot is in it. Only a bot the caller
+   * may be shown withholds `elsewhere`: a concealed one answering to the spelling must not change this answer, or the
+   * two answers would say whether it exists. Asked only when a spelling names nothing, so a resolution that succeeds
+   * never reads the person's other places. */
   const unknownTarget = (): { error: string } => {
-    const away = bots.some(bot => !wider?.hides(bot) && (fold(bot.name) === name || loose(bot.name) === loose(wanted))) ? null : elsewhere(wanted);
+    const away = bots.some(bot => exposed(bot) && (fold(bot.name) === name || loose(bot.name) === loose(wanted))) ? null : elsewhere(wanted);
     if (away && "where" in away) return { error: away.where };
     return { error: `No bot with id or name "${shown}" — call list_bots and copy the exact id from the result.${teammateChoices(reachable.filter(bot => exposed(bot)))}${away ? ` ${away.hint}` : ""} ${PEER_ACCESS_HELP} A teammate's name is enough in bot_ids, so a long id never has to be copied exactly.` };
   };
@@ -241,7 +243,7 @@ export function resolveTeammate<T extends RosterMember>(
    * "no longer available" words, and repeats only the spelling the caller typed. Nothing here can name an owner: this
    * function is given no way to look one up. */
   const outOfReach = (bot: T): string => {
-    if (wider?.hides(bot)) return unknownId;
+    if (wider?.hides(bot)) return unknownTarget().error;
     if (!sameAudience(from.visibility, bot.visibility)) return unknownTarget().error;
     if (bot.hidden) return goneIdRefusal(shown);
     return wider?.refusal(bot) ?? unknownId;

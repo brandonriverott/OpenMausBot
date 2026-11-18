@@ -21,6 +21,10 @@ export function handoffReceipts(value: unknown): HandoffReceipt[] {
     .flatMap((receipt) => typeof receipt.botId === "string" && typeof receipt.outcome === "string" ? [{ botId: receipt.botId, outcome: receipt.outcome }] : []);
 }
 
+/** The run a conversation is, while it is one: the id says which run, so a refusal recorded by a call that outlived its
+ * run is never handed to the run that replaced it on the same conversation. */
+export interface RunRef { id: string; routineId: string; botId: string }
+
 export interface RefusedHandoffDeps {
   bots(): readonly RosterMember[];
   /** A bot `from` may never be told of (personal-reach.ts hides). */
@@ -29,7 +33,7 @@ export interface RefusedHandoffDeps {
    * so this bookkeeping names it too, and a bot it does not show stays unnamed. */
   listed?(from: RosterMember, target: RosterMember, threadId: string): boolean;
   /** The run this conversation is, when it is one. */
-  runOf(threadId: string): { routineId: string; botId: string } | undefined;
+  runOf(threadId: string): RunRef | undefined;
   /** The person key of who wrote this routine; absent off a Cloud and for a routine nobody wrote. */
   writerOf(routineId: string): string | undefined;
   /** Who this bot's failures in this conversation are for. */
@@ -43,7 +47,7 @@ export interface RefusedHandoffDeps {
 }
 
 export function createRefusedHandoffs(deps: RefusedHandoffDeps) {
-  const refused = new Map<string, Map<string, Refused>>();
+  const refused = new Map<string, { run: RunRef; seen: Map<string, Refused> }>();
   const toldWriter = new Map<string, string>();
 
   /** The bot `raw` names that this caller may not reach, and whether it may identify it. A bot here that only another
@@ -73,11 +77,18 @@ export function createRefusedHandoffs(deps: RefusedHandoffDeps) {
   }
 
   return {
+    /** The conversation's run now, for a caller that must name it again when its own call returns. */
+    run(threadId: string): RunRef | undefined {
+      return deps.runOf(threadId);
+    },
     /** A coordinate_bots call in a routine's run came back: remembers the bots it could not reach, and forgets one this
-     * call's own receipts say it reached since, by the id the roster resolved to. */
-    settled(threadId: string, from: RosterMember, named: readonly string[], status: number, receipts: readonly HandoffReceipt[] = []): void {
-      if (!deps.runOf(threadId)) return;
-      const seen = refused.get(threadId) ?? new Map<string, Refused>();
+     * call's own receipts say it reached since, by the id the roster resolved to. `initiating` is the run the call was
+     * made in, read before it was sent: a call that outlives its run records nothing for the run that replaced it. */
+    settled(threadId: string, from: RosterMember, named: readonly string[], status: number, receipts: readonly HandoffReceipt[] = [], initiating?: RunRef): void {
+      const run = deps.runOf(threadId);
+      if (!run || (initiating && initiating.id !== run.id)) return;
+      const kept = refused.get(threadId);
+      const seen = kept && kept.run.id === run.id ? kept.seen : new Map<string, Refused>();
       for (const raw of named) {
         const target = status >= 400 ? identify(raw, from, threadId) : null;
         if (target) seen.set(target.target.id, target);
@@ -85,16 +96,20 @@ export function createRefusedHandoffs(deps: RefusedHandoffDeps) {
       // Which bot a retry went to comes from the delivery itself: a receipt's canonical id, never the text the model wrote.
       // Text matching here let one bot's id prefix clear a refusal for a bot nothing was ever sent to.
       for (const { botId, outcome } of receipts) if (outcome === "queued" || outcome === "injected") seen.delete(botId);
-      if (seen.size) refused.set(threadId, seen);
+      if (seen.size) refused.set(threadId, { run, seen });
       else refused.delete(threadId);
     },
     /** The run in this conversation is ending well: what it must say instead, once; null when nothing was refused. */
     take(threadId: string): string | null {
-      const seen = [...refused.get(threadId)?.values() ?? []];
-      if (!seen.length) return null;
+      const kept = refused.get(threadId);
+      if (!kept) return null;
+      const run = deps.runOf(threadId);
+      // A refusal belongs to the run that made the call: if another run has the conversation now, it is not this one's.
+      if (run && run.id !== kept.run.id) { refused.delete(threadId); return null; }
+      const seen = [...kept.seen.values()];
       refused.delete(threadId);
       const said = words(threadId, seen);
-      const run = deps.runOf(threadId), writer = run && deps.writerOf(run.routineId);
+      const writer = run && deps.writerOf(run.routineId);
       const asked = run ? deps.askedPerson(run.botId, threadId) : null, inboxedAnyway = writer === asked && !deps.theirOwn(threadId, asked!);
       if (run && writer && !inboxedAnyway && toldWriter.get(run.routineId) !== said) {
         toldWriter.set(run.routineId, said);

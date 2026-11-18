@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveTeammate, type RosterMember } from "../peer-roster.ts";
-import { createRefusedHandoffs } from "./refused-handoffs.ts";
+import { createRefusedHandoffs, type RunRef } from "./refused-handoffs.ts";
 import type { Delivery } from "./person-inbox.ts";
 
 const B = { people: ["mara@acme.test"] };
@@ -14,12 +14,13 @@ const bots = [rooms, hours, books, ledger, mausbot];
 
 function fixture(over: { writer?: string; asked?: string | null; run?: boolean; own?: boolean; roster?: RosterMember[]; listed?: boolean } = {}) {
   const lines: Array<{ to: string; delivery: Delivery }> = [];
+  let run: RunRef | undefined = over.run === false ? undefined : { id: "run-1", routineId: "r1", botId: "rooms" };
   const refused = createRefusedHandoffs({
-    bots: () => over.roster ?? bots, runOf: () => (over.run === false ? undefined : { routineId: "r1", botId: "rooms" }), writerOf: () => over.writer,
+    bots: () => over.roster ?? bots, runOf: () => run, writerOf: () => over.writer,
     listed: (_from, target) => over.listed === true && target.id === ledger.id,
     askedPerson: () => over.asked ?? null, theirOwn: () => over.own === true, inbox: () => ({ deliver: (to, delivery) => { lines.push({ to, delivery }); } }), language: () => undefined,
   });
-  return { refused, lines };
+  return { refused, lines, setRun: (next: RunRef | undefined) => { run = next; } };
 }
 
 /** The line a refusal names nobody in: the run still says a hand-off was refused, and whose it was is not in it. */
@@ -112,6 +113,27 @@ describe("a routine's refused hand-off", () => {
     const { refused } = fixture({ run: false });
     refused.settled("t", rooms, ["Bookkeeping"], 403);
     expect(refused.take("t")).toBeNull();
+  });
+
+  it("records a call's refusal for the run that made it, never for the run that replaced it", () => {
+    const next: RunRef = { id: "run-2", routineId: "r1", botId: "rooms" };
+    // A call read its run before it was sent, and the run ended and another began on the same conversation before its
+    // answer came back: that other run did not make the call, so it is not told the hand-off was refused.
+    const replaced = fixture();
+    const initiating = replaced.refused.run("t");
+    expect(initiating).toMatchObject({ id: "run-1" });
+    replaced.setRun(next);
+    replaced.refused.settled("t", rooms, ["Bookkeeping"], 403, [], initiating);
+    expect(replaced.refused.take("t")).toBeNull();
+    // A refusal recorded in one run is not carried into the next one's answer either.
+    const carried = fixture();
+    carried.refused.settled("t", rooms, ["Bookkeeping"], 403);
+    carried.setRun(next);
+    expect(carried.refused.take("t")).toBeNull();
+    // The same run still gets it, and the run's own id is what makes it the same run.
+    const same = fixture();
+    same.refused.settled("t", rooms, ["Bookkeeping"], 403, [], same.refused.run("t"));
+    expect(same.refused.take("t")).toBe(UNNAMED);
   });
 
   it("tells who wrote the routine in their inbox when the bot's failures reach someone else, once for the same words", () => {

@@ -145,6 +145,16 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
       return Array.isArray(blocks) ? blocks.map((block: any) => String(block?.text ?? "")).join("\n") : "";
     } catch { return ""; }
   };
+  /** Every prompt the helper's CLI was dispatched, oldest first: `helper.json.prompt.json` holds only the latest. */
+  const helperPrompts = (): string[] => {
+    try {
+      return readFileSync(join(home, "helper.json.prompts-each.jsonl"), "utf8").trim().split("\n")
+        .map((line: string) => JSON.parse(line) as Array<{ text?: string }> | null)
+        .map((blocks: Array<{ text?: string }> | null) => (Array.isArray(blocks) ? blocks.map((block) => String(block?.text ?? "")).join("\n") : ""));
+    } catch { return []; }
+  };
+  /** The prompt dispatched for one assignment, from its own line: a later dispatch cannot have replaced it. */
+  const helperPromptFor = (assignmentId: string): string => helperPrompts().find((text) => text.includes(`assignment ${assignmentId}`)) ?? "";
   const hideAll = async () => {
     for (const existing of (await api("GET", "/api/bots")).body.bots) {
       await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
@@ -669,8 +679,10 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
       const inbound = (await threadMessages(work.threadId)).filter((m: any) => m.roomRequest?.phase === "request" && m.from?.botId === asker.id);
       expect(inbound).toHaveLength(1);
       expect(inbound[0].text).toContain("delegated task");
-      const envelope = helperPrompt();
-      expect(envelope).toContain(`[From @Asker (bot) · assignment ${work.id} · `);
+      // The teammate is dispatched twice here, so the first assignment's envelope comes from its own line: the helper's
+      // latest-prompt file holds the second task's by the time this runs.
+      const envelope = helperPromptFor(work.id);
+      expect(envelope, "the first assignment's prompt").toContain(`[From @Asker (bot) · assignment ${work.id} · `);
       expect(envelope).toContain("A routine run started this work");
       expect(envelope).not.toMatch(/ROUTINE_LINEAGE|asked: "|outside content/);
       // The teammate finished its work, not the request: a second, different task is its own assignment.
@@ -678,6 +690,10 @@ describe("routine comms e2e on the job runtime (fake ACP fleet)", () => {
       expect(assignments(helper.id, asker.id).map((node: any) => node.text)).toEqual(["delegated task", "second delegated task"]);
       await waitUntil(async () => ["completed", "failed", "cancelled"].includes(assignments(helper.id, asker.id)[1]?.status), 45_000, "the second task never settled");
       expect(assignments(helper.id, asker.id).map((node: any) => node.status)).toEqual(["completed", "completed"]);
+      // Each dispatch kept its own line: the first task's envelope is still readable once the second task has run.
+      const second = assignments(helper.id, asker.id)[1];
+      expect(helperPromptFor(second.id)).toContain(`[From @Asker (bot) · assignment ${second.id} · `);
+      expect(helperPromptFor(second.id)).toContain("second delegated task");
       await waitUntil(async () => (await runState(run.id)).status !== "running" && (await runState(run.id)).status !== "waiting", 45_000, "the routine's run never settled");
       expect((await runState(run.id)).status).toBe("completed");
       expect((await runState(run.id)).output).toContain("woke after delegation: saw the result");

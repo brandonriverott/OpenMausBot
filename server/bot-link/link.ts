@@ -330,12 +330,13 @@ export function createBotLink(deps: BotLinkDeps) {
     if (!state) return undefined;
     const wanted = raw.trim();
     const lower = wanted.toLowerCase();
-    // A bot here answers to its own id first, whatever it is shaped like: its work, its files and its result stay here, and
-    // a bot of another place later given that address never takes them.
-    if (isLocalId(wanted)) return undefined;
-    if (isLinkedId(wanted)) return remoteOf(wanted);
     const local = deps.bots();
+    // A bot here answers to its own id first, whatever it is shaped like: its work, its files and its result stay here, and
+    // a bot of another place later given that address never takes them. The start of one counts too: a bot here carrying a
+    // link- shaped id from before is addressed by its prefix, and an address of that shape must not take that work.
+    if (isLocalId(wanted)) return undefined;
     if (isIdStart(wanted) && local.some((bot) => bot.id.toLowerCase().startsWith(lower))) return undefined;
+    if (isLinkedId(wanted)) return remoteOf(wanted);
     const named = fold(wanted);
     if (!named || local.some((bot) => !bot.hidden && fold(bot.name) === named)) return undefined;
     const matches = Object.entries(state.peers).flatMap(([peer, known]) => known.bots.filter((bot) => fold(bot.name) === named).map((bot) => ({ peer, bot })));

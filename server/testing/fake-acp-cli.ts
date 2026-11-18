@@ -31,6 +31,8 @@
 //   FAKE_ACP_PERMISSION_OPTIONS  JSON options override in permission mode
 //   FAKE_ACP_DUMP  path for {argv, env}; with FAKE_ACP_MODES or FAKE_ACP_MODELS also <dump>.prompts.jsonl
 //     and <dump>.initialize.json for the initialize params
+//   FAKE_ACP_DUMP_PROMPT=1  <dump>.prompt.json is the latest prompt and <dump>.prompts-each.jsonl one line per dispatch,
+//     so a test that dispatches twice reads each prompt from its own line rather than the one the last overwrote
 //   FAKE_ACP_LAUNCH_COUNT_FILE  process counter incremented at startup
 //   FAKE_ACP_VERSION  what `--version` prints (default "fake-acp 1.0.0"); a CLI the driver checks the shape of needs its own
 //   FAKE_ACP_RPC_DUMP  this process's method list, rewritten after every request
@@ -1132,7 +1134,9 @@ function handle(msg: any) {
         }));
       }
       if (process.env.FAKE_ACP_DUMP && process.env.FAKE_ACP_DUMP_PROMPT === "1") {
-        writeFileSync(`${process.env.FAKE_ACP_DUMP}.prompt.json`, JSON.stringify(msg.params?.prompt ?? null, null, 2));
+        const prompt = msg.params?.prompt ?? null;
+        writeFileSync(`${process.env.FAKE_ACP_DUMP}.prompt.json`, JSON.stringify(prompt, null, 2));
+        appendFileSync(`${process.env.FAKE_ACP_DUMP}.prompts-each.jsonl`, JSON.stringify(prompt) + "\n");
       }
       appendAntigravitySteps(msg.params?.sessionId);
       if (failRpc(msg)) return;
