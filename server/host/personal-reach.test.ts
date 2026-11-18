@@ -47,11 +47,12 @@ describe("a person's own MausBot reaching the team's bots", () => {
       expect(unreachableTeammate(bots, mausbot, hidden.name, (bot) => world().hides(mausbot, bot))?.id).not.toBe(hidden.id);
     }
     const wider = (reach = world()) => ({ reaches: (bot: RosterMember) => reach.listed(mausbot, bot, "mine"), hides: (bot: RosterMember) => reach.hides(mausbot, bot), refusal: (bot: RosterMember) => reach.refusal(mausbot, bot, "mine") });
-    // "Payroll" is the hidden bot's id in another case, so identity settles before any name is tried and the answer
-    // is the one an id nobody has gets: it names nothing.
-    expect(resolveTeammate(bots, mausbot, "Payroll", undefined, wider())).toEqual({
-      error: 'No bot with id "Payroll" — call list_bots and copy the exact id from the result',
-    });
+    // "Payroll" is the hidden bot's id in another case, so identity settles before any name is tried and the answer is
+    // the one an id nobody has gets: it names nothing, and a bot that exists but is hidden answers exactly as an absent
+    // one does, so neither answer says it exists.
+    const withoutPayroll = bots.filter((bot) => bot.id !== payroll.id);
+    expect(resolveTeammate(bots, mausbot, "Payroll", undefined, wider()))
+      .toEqual(resolveTeammate(withoutPayroll, mausbot, "Payroll", undefined, wider()));
     // A name that is no bot's id still gets exactly the answer an unknown name gets.
     const unknown = resolveTeammate(bots, mausbot, "Nobody", undefined, wider());
     expect(resolveTeammate(bots, mausbot, "MausBot", undefined, wider())).toEqual({
